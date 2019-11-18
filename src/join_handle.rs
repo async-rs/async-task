@@ -208,9 +208,6 @@ impl<R, T> Future for JoinHandle<R, T> {
 
                     // If the task has been closed, notify the awaiter and return `None`.
                     if state & CLOSED != 0 {
-                        // Even though the awaiter is most likely the current task, it could also
-                        // be another task.
-                        (*header).notify_unless(cx.waker());
                         return Poll::Ready(None);
                     }
 
