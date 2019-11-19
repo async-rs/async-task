@@ -206,7 +206,9 @@ impl<R, T> Future for JoinHandle<R, T> {
                     // completed or closed just before registration so we need to check for that.
                     state = (*header).state.load(Ordering::Acquire);
 
-                    // If the task has been closed, notify the awaiter and return `None`.
+                    // If the task has been closed, return `None`. We do not need to notify the
+                    // awaiter here, since we have replaced the waker above, and the executor can
+                    // only set it back to None.
                     if state & CLOSED != 0 {
                         return Poll::Ready(None);
                     }
