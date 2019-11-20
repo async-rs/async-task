@@ -208,7 +208,7 @@ impl<R, T> Future for JoinHandle<R, T> {
 
                     // If the task has been closed, return `None`. We do not need to notify the
                     // awaiter here, since we have replaced the waker above, and the executor can
-                    // only set it back to None.
+                    // only set it back to `None`.
                     if state & CLOSED != 0 {
                         return Poll::Ready(None);
                     }
