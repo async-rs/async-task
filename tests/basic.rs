@@ -310,3 +310,19 @@ fn schedule_counter() {
     assert_eq!(handle.tag().load(Ordering::SeqCst), 3);
     r.recv().unwrap();
 }
+
+#[test]
+fn drop_inside_schedule() {
+    let s = "1234".to_owned();
+
+    let (task, _) = async_task::spawn(
+        async {},
+        move |task| {
+            println!("{:?}", s);
+            drop(task);
+            println!("{:?}", s);
+        },
+        (),
+    );
+    task.schedule();
+}
