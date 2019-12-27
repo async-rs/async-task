@@ -313,14 +313,20 @@ fn schedule_counter() {
 
 #[test]
 fn drop_inside_schedule() {
-    let s = "1234".to_owned();
+    struct DropGuard(AtomicUsize);
+    impl Drop for DropGuard {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    let guard = DropGuard(AtomicUsize::new(0));
 
     let (task, _) = async_task::spawn(
         async {},
         move |task| {
-            println!("{:?}", s);
+            assert_eq!(guard.0.load(Ordering::SeqCst), 0);
             drop(task);
-            println!("{:?}", s);
+            assert_eq!(guard.0.load(Ordering::SeqCst), 0);
         },
         (),
     );
