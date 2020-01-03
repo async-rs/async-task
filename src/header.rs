@@ -4,8 +4,6 @@ use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::Waker;
 
-use crossbeam_utils::Backoff;
-
 use crate::raw::TaskVTable;
 use crate::state::*;
 use crate::utils::{abort_on_panic, extend};
@@ -55,7 +53,7 @@ impl Header {
                 Ok(_) => {
                     // Notify the awaiter that the task has been closed.
                     if state & AWAITER != 0 {
-                        self.notify();
+                        self.notify(None);
                     }
 
                     break;
@@ -67,68 +65,53 @@ impl Header {
 
     /// Notifies the awaiter blocked on this task.
     ///
-    /// If there is a registered waker, it will be removed from the header and woken up.
+    /// If the awaiter is the same as the current waker, it will not be notified.
     #[inline]
-    pub(crate) fn notify(&self) {
-        if let Some(waker) = self.swap_awaiter(None) {
-            // We need a safeguard against panics because waking can panic.
-            abort_on_panic(|| {
-                waker.wake();
-            });
-        }
-    }
-
-    /// Notifies the awaiter blocked on this task, unless its waker matches `current`.
-    ///
-    /// If there is a registered waker, it will be removed from the header in any case.
-    #[inline]
-    pub(crate) fn notify_unless(&self, current: &Waker) {
-        if let Some(waker) = self.swap_awaiter(None) {
-            if !waker.will_wake(current) {
-                // We need a safeguard against panics because waking can panic.
-                abort_on_panic(|| {
-                    waker.wake();
-                });
-            }
-        }
-    }
-
-    /// Swaps the awaiter for a new waker and returns the previous value.
-    #[inline]
-    pub(crate) fn swap_awaiter(&self, new: Option<Waker>) -> Option<Waker> {
-        let new_is_none = new.is_none();
-
+    pub(crate) fn notify(&self, current: Option<&Waker>) {
         // We're about to try acquiring the lock in a loop. If it's already being held by another
-        // thread, we'll have to spin for a while so it's best to employ a backoff strategy.
-        let backoff = Backoff::new();
+        // thread, we'll have to spin for a while and yield the current thread.
         loop {
             // Acquire the lock. If we're storing an awaiter, then also set the awaiter flag.
-            let state = if new_is_none {
-                self.state.fetch_or(LOCKED, Ordering::Acquire)
-            } else {
-                self.state.fetch_or(LOCKED | AWAITER, Ordering::Acquire)
-            };
+            let state = self.state.fetch_or(LOCKED, Ordering::Acquire);
 
             // If the lock was acquired, break from the loop.
             if state & LOCKED == 0 {
                 break;
             }
 
-            // Snooze for a little while because the lock is held by another thread.
-            backoff.snooze();
+            // Yield because the lock is held by another thread.
+            std::thread::yield_now();
         }
 
         // Replace the awaiter.
-        let old = self.awaiter.replace(new);
+        let old = self.awaiter.take();
 
         // Release the lock. If we've cleared the awaiter, then also unset the awaiter flag.
-        if new_is_none {
-            self.state.fetch_and(!LOCKED & !AWAITER, Ordering::Release);
-        } else {
-            self.state.fetch_and(!LOCKED, Ordering::Release);
-        }
+        self.state.fetch_and(!LOCKED & !AWAITER, Ordering::Release);
 
-        old
+        if let Some(w) = old {
+            if let Some(c) = current {
+                if w.will_wake(&c) {
+                    return;
+                }
+            }
+
+            // We need a safeguard against panics because waking can panic.
+            abort_on_panic(|| w.wake());
+        }
+    }
+
+    #[inline]
+    pub(crate) fn register(&self, new: Waker) {
+        // We're about to try acquiring the lock in a loop. If it's already being held by another
+        // thread, we'll have to spin for a while and yield the current thread.
+        while self.state.fetch_or(LOCKED | AWAITER, Ordering::Acquire) & LOCKED != 0 {}
+
+        // Replace the awaiter.
+        self.awaiter.set(Some(new));
+
+        // Release the lock. If we've cleared the awaiter, then also unset the awaiter flag.
+        self.state.fetch_and(!LOCKED, Ordering::Release);
     }
 
     /// Returns the offset at which the tag of type `T` is stored.

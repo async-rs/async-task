@@ -474,7 +474,7 @@ where
             if state & CLOSED != 0 {
                 // Notify the awaiter that the task has been closed.
                 if state & AWAITER != 0 {
-                    (*raw.header).notify();
+                    (*raw.header).notify(None);
                 }
 
                 // Drop the future.
@@ -542,7 +542,7 @@ where
 
                             // Notify the awaiter that the task has been completed.
                             if state & AWAITER != 0 {
-                                (*raw.header).notify();
+                                (*raw.header).notify(None);
                             }
 
                             // Drop the task reference.
@@ -649,7 +649,7 @@ where
 
                                 // Notify the awaiter that the task has been closed.
                                 if state & AWAITER != 0 {
-                                    (*raw.header).notify();
+                                    (*raw.header).notify(None);
                                 }
 
                                 // Drop the task reference.

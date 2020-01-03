@@ -71,7 +71,7 @@ impl<R, T> JoinHandle<R, T> {
 
                         // Notify the awaiter that the task has been closed.
                         if state & AWAITER != 0 {
-                            (*header).notify();
+                            (*header).notify(None);
                         }
 
                         break;
@@ -190,7 +190,7 @@ impl<R, T> Future for JoinHandle<R, T> {
                 if state & CLOSED != 0 {
                     // Even though the awaiter is most likely the current task, it could also be
                     // another task.
-                    (*header).notify_unless(cx.waker());
+                    (*header).notify(Some(cx.waker()));
                     return Poll::Ready(None);
                 }
 
@@ -199,7 +199,7 @@ impl<R, T> Future for JoinHandle<R, T> {
                     // Replace the waker with one associated with the current task. We need a
                     // safeguard against panics because dropping the previous waker can panic.
                     abort_on_panic(|| {
-                        (*header).swap_awaiter(Some(cx.waker().clone()));
+                        (*header).register(cx.waker().clone());
                     });
 
                     // Reload the state after registering. It is possible that the task became
@@ -230,7 +230,7 @@ impl<R, T> Future for JoinHandle<R, T> {
                         // Notify the awaiter. Even though the awaiter is most likely the current
                         // task, it could also be another task.
                         if state & AWAITER != 0 {
-                            (*header).notify_unless(cx.waker());
+                            (*header).notify(Some(cx.waker()));
                         }
 
                         // Take the output from the task.
