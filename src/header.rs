@@ -96,6 +96,7 @@ impl Header {
     /// This method is called when `JoinHandle` is polled and the task has not completed.
     #[inline]
     pub(crate) fn register(&self, waker: &Waker) {
+        // Load the state and synchronize with it.
         let mut state = self.state.fetch_or(0, Ordering::Acquire);
 
         loop {
