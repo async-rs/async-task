@@ -1,10 +1,10 @@
-use std::fmt;
-use std::future::Future;
-use std::marker::{PhantomData, Unpin};
-use std::pin::Pin;
-use std::ptr::NonNull;
-use std::sync::atomic::Ordering;
-use std::task::{Context, Poll};
+use core::fmt;
+use core::future::Future;
+use core::marker::{PhantomData, Unpin};
+use core::pin::Pin;
+use core::ptr::NonNull;
+use core::sync::atomic::Ordering;
+use core::task::{Context, Poll};
 
 use crate::header::Header;
 use crate::state::*;

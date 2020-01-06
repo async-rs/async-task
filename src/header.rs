@@ -1,8 +1,8 @@
-use std::alloc::Layout;
-use std::cell::UnsafeCell;
-use std::fmt;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::task::Waker;
+use core::alloc::Layout;
+use core::cell::UnsafeCell;
+use core::fmt;
+use core::sync::atomic::{AtomicUsize, Ordering};
+use core::task::Waker;
 
 use crate::raw::TaskVTable;
 use crate::state::*;
