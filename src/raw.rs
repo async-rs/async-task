@@ -1,5 +1,5 @@
 use std::alloc::{self, Layout};
-use std::cell::Cell;
+use std::cell::UnsafeCell;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::mem::{self, ManuallyDrop};
@@ -117,7 +117,7 @@ where
             // Write the header as the first field of the task.
             (raw.header as *mut Header).write(Header {
                 state: AtomicUsize::new(SCHEDULED | HANDLE | REFERENCE),
-                awaiter: Cell::new(None),
+                awaiter: UnsafeCell::new(None),
                 vtable: &TaskVTable {
                     raw_waker_vtable: RawWakerVTable::new(
                         Self::clone_waker,

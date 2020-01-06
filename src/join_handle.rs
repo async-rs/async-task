@@ -199,7 +199,7 @@ impl<R, T> Future for JoinHandle<R, T> {
                     // Replace the waker with one associated with the current task. We need a
                     // safeguard against panics because dropping the previous waker can panic.
                     abort_on_panic(|| {
-                        (*header).register(cx.waker().clone());
+                        (*header).register(cx.waker());
                     });
 
                     // Reload the state after registering. It is possible that the task became

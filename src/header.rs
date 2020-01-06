@@ -1,5 +1,5 @@
 use std::alloc::Layout;
-use std::cell::Cell;
+use std::cell::UnsafeCell;
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::Waker;
@@ -20,7 +20,7 @@ pub(crate) struct Header {
     /// The task that is blocked on the `JoinHandle`.
     ///
     /// This waker needs to be woken up once the task completes or is closed.
-    pub(crate) awaiter: Cell<Option<Waker>>,
+    pub(crate) awaiter: UnsafeCell<Option<Waker>>,
 
     /// The virtual table.
     ///
@@ -68,50 +68,101 @@ impl Header {
     /// If the awaiter is the same as the current waker, it will not be notified.
     #[inline]
     pub(crate) fn notify(&self, current: Option<&Waker>) {
-        // We're about to try acquiring the lock in a loop. If it's already being held by another
-        // thread, we'll have to spin for a while and yield the current thread.
-        loop {
-            // Acquire the lock. If we're storing an awaiter, then also set the awaiter flag.
-            let state = self.state.fetch_or(LOCKED, Ordering::Acquire);
+        // Mark the awaiter as being notified.
+        let state = self.state.fetch_or(NOTIFYING, Ordering::AcqRel);
 
-            // If the lock was acquired, break from the loop.
-            if state & LOCKED == 0 {
-                break;
+        // If the awaiter was not being notified nor registered...
+        if state & (NOTIFYING | REGISTERING) == 0 {
+            // Take the waker out.
+            let waker = unsafe { (*self.awaiter.get()).take() };
+
+            // Mark the state as not being notified anymore nor containing an awaiter.
+            self.state
+                .fetch_and(!NOTIFYING & !AWAITER, Ordering::Release);
+
+            if let Some(w) = waker {
+                // We need a safeguard against panics because waking can panic.
+                abort_on_panic(|| match current {
+                    None => w.wake(),
+                    Some(c) if !w.will_wake(c) => w.wake(),
+                    Some(_) => {}
+                });
             }
-
-            // Yield because the lock is held by another thread.
-            std::thread::yield_now();
-        }
-
-        // Replace the awaiter.
-        let old = self.awaiter.take();
-
-        // Release the lock. If we've cleared the awaiter, then also unset the awaiter flag.
-        self.state.fetch_and(!LOCKED & !AWAITER, Ordering::Release);
-
-        if let Some(w) = old {
-            if let Some(c) = current {
-                if w.will_wake(&c) {
-                    return;
-                }
-            }
-
-            // We need a safeguard against panics because waking can panic.
-            abort_on_panic(|| w.wake());
         }
     }
 
+    /// Registers a new awaiter blocked on this task.
+    ///
+    /// This method is called when `JoinHandle` is polled and the task has not completed.
     #[inline]
-    pub(crate) fn register(&self, new: Waker) {
-        // We're about to try acquiring the lock in a loop. If it's already being held by another
-        // thread, we'll have to spin for a while and yield the current thread.
-        while self.state.fetch_or(LOCKED | AWAITER, Ordering::Acquire) & LOCKED != 0 {}
+    pub(crate) fn register(&self, waker: &Waker) {
+        let mut state = self.state.fetch_or(0, Ordering::Acquire);
 
-        // Replace the awaiter.
-        self.awaiter.set(Some(new));
+        loop {
+            // There can't be two concurrent registrations because `JoinHandle` can only be polled
+            // by a unique pinned reference.
+            debug_assert!(state & REGISTERING == 0);
 
-        // Release the lock. If we've cleared the awaiter, then also unset the awaiter flag.
-        self.state.fetch_and(!LOCKED, Ordering::Release);
+            // If the state is being notified at this moment, just wake and return without
+            // registering.
+            if state & NOTIFYING != 0 {
+                waker.wake_by_ref();
+                return;
+            }
+
+            // Mark the state to let other threads know we're registering a new awaiter.
+            match self.state.compare_exchange_weak(
+                state,
+                state | REGISTERING,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    state |= REGISTERING;
+                    break;
+                }
+                Err(s) => state = s,
+            }
+        }
+
+        // Put the waker into the awaiter field.
+        unsafe {
+            abort_on_panic(|| (*self.awaiter.get()) = Some(waker.clone()));
+        }
+
+        // This variable will contain the newly registered waker if a notification comes in before
+        // we complete registration.
+        let mut waker = None;
+
+        loop {
+            // If there was a notification, take the waker out of the awaiter field.
+            if state & NOTIFYING != 0 {
+                if let Some(w) = unsafe { (*self.awaiter.get()).take() } {
+                    waker = Some(w);
+                }
+            }
+
+            // The new state is not being notified nor registered, but there might or might not be
+            // an awaiter depending on whether there was a concurrent notification.
+            let new = if waker.is_none() {
+                (state & !NOTIFYING & !REGISTERING) | AWAITER
+            } else {
+                state & !NOTIFYING & !REGISTERING & !AWAITER
+            };
+
+            match self
+                .state
+                .compare_exchange_weak(state, new, Ordering::AcqRel, Ordering::Acquire)
+            {
+                Ok(_) => break,
+                Err(s) => state = s,
+            }
+        }
+
+        // If there was a notification during registration, wake the awaiter now.
+        if let Some(w) = waker {
+            abort_on_panic(|| w.wake());
+        }
     }
 
     /// Returns the offset at which the tag of type `T` is stored.
