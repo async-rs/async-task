@@ -44,18 +44,28 @@ fn custom_block_on_0_yields(b: &mut Bencher) {
 }
 
 #[bench]
+fn custom_block_on_10_yields(b: &mut Bencher) {
+    b.iter(|| block_on(Yields(10)));
+}
+
+#[bench]
+fn custom_block_on_50_yields(b: &mut Bencher) {
+    b.iter(|| block_on(Yields(50)));
+}
+
+#[bench]
 fn futures_block_on_0_yields(b: &mut Bencher) {
     b.iter(|| futures::executor::block_on(Yields(0)));
 }
 
 #[bench]
-fn custom_block_on_100_yields(b: &mut Bencher) {
-    b.iter(|| block_on(Yields(100)));
+fn futures_block_on_10_yields(b: &mut Bencher) {
+    b.iter(|| futures::executor::block_on(Yields(10)));
 }
 
 #[bench]
-fn futures_block_on_100_yields(b: &mut Bencher) {
-    b.iter(|| futures::executor::block_on(Yields(100)));
+fn futures_block_on_50_yields(b: &mut Bencher) {
+    b.iter(|| futures::executor::block_on(Yields(50)));
 }
 
 struct Yields(u32);
