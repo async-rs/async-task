@@ -11,6 +11,9 @@ use futures::channel::oneshot;
 
 /// Runs a future to completion on the current thread.
 fn block_on<F: Future>(future: F) -> F::Output {
+    // Pin the future on the stack.
+    pin_utils::pin_mut!(future);
+
     thread_local! {
         // Parker and waker associated with the current thread.
         static CACHE: RefCell<(Parker, Waker)> = {
@@ -20,9 +23,6 @@ fn block_on<F: Future>(future: F) -> F::Output {
             RefCell::new((parker, waker))
         };
     }
-
-    // Pin the future on the stack.
-    pin_utils::pin_mut!(future);
 
     CACHE.with(|cache| {
         // Panic if `block_on()` is called recursively.
