@@ -48,14 +48,14 @@ pub(crate) struct RawTask<F, R, S, T> {
     tag: T,
     /// The schedule function.
     schedule: S,
-    /// The future.
+    /// The future and after its completion the future's output.
     fut_then_output: FutThenOutput<F, R>,
 }
 
 enum FutThenOutput<F, R> {
     /// The future.
     Future(F),
-    /// The output of the future.
+    /// The future's output.
     Output(R),
 }
 
