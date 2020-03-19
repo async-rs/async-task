@@ -39,7 +39,7 @@ pub(crate) struct TaskVTable {
     pub(crate) clone_waker: unsafe fn(ptr: *const ()) -> RawWaker,
 }
 
-/// Raw pointers to the fields inside a task.
+/// The raw in-memory representation of a task.
 #[repr(C)]
 pub(crate) struct RawTask<F, R, S, T> {
     /// The task header.
@@ -48,7 +48,7 @@ pub(crate) struct RawTask<F, R, S, T> {
     tag: T,
     /// The schedule function.
     schedule: S,
-    /// The future and after its completion the future's output.
+    /// The future and, after its completion, the future's output.
     fut_then_output: FutThenOutput<F, R>,
 }
 
