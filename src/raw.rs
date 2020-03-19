@@ -1,7 +1,8 @@
 use core::cell::UnsafeCell;
 use core::future::Future;
+use core::hint;
 use core::marker::PhantomData;
-use core::mem::{self, ManuallyDrop, MaybeUninit};
+use core::mem::{self, ManuallyDrop};
 use core::pin::Pin;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -48,9 +49,14 @@ pub(crate) struct RawTask<F, R, S, T> {
     /// The schedule function.
     schedule: S,
     /// The future.
-    future: F,
+    fut_then_output: FutThenOutput<F, R>,
+}
+
+enum FutThenOutput<F, R> {
+    /// The future.
+    Future(F),
     /// The output of the future.
-    output: MaybeUninit<R>,
+    Output(R),
 }
 
 impl<F, R, S, T> RawTask<F, R, S, T>
@@ -85,8 +91,7 @@ where
             },
             tag,
             schedule,
-            future,
-            output: MaybeUninit::uninit(),
+            fut_then_output: FutThenOutput::Future(future),
         });
 
         NonNull::from(Box::leak(raw_task)).cast()
@@ -314,15 +319,19 @@ where
         let raw = ptr as *mut Self;
 
         // We need a safeguard against panics because the destructor can panic.
-        abort_on_panic(|| {
-            ptr::drop_in_place(&mut (*raw).future);
+        abort_on_panic(|| match &mut (*raw).fut_then_output {
+            FutThenOutput::Future(future) => ptr::drop_in_place(future),
+            _ => hint::unreachable_unchecked(),
         })
     }
 
     /// Returns a pointer to the output inside a task.
     unsafe fn get_output(ptr: *const ()) -> *const () {
-        let raw = ptr as *mut Self;
-        (*raw).output.as_ptr().cast()
+        let raw = ptr as *const Self;
+        match &(*raw).fut_then_output {
+            FutThenOutput::Output(out) => out as *const R as *const (),
+            _ => hint::unreachable_unchecked(),
+        }
     }
 
     /// Cleans up task's resources and deallocates it.
@@ -343,11 +352,8 @@ where
         });
 
         // Finally, deallocate the memory reserved by the task.
-        let boxed = Box::from_raw(raw);
-        // Take out the task and deallocate its heap memory WITHOUT dropping the
-        // task itself, then forget the task
-        let task = *boxed;
-        mem::forget(task);
+        let boxed = Box::from_raw(raw as *mut ManuallyDrop<Self>);
+        drop(boxed);
     }
 
     /// Runs a task.
@@ -399,14 +405,19 @@ where
         // Poll the inner future, but surround it with a guard that closes the task in case polling
         // panics.
         let guard = Guard(raw);
-        let poll = <F as Future>::poll(Pin::new_unchecked(&mut (*raw).future), cx);
+        let future = match &mut (*raw).fut_then_output {
+            FutThenOutput::Future(future) => future,
+            _ => hint::unreachable_unchecked(),
+        };
+
+        let poll = <F as Future>::poll(Pin::new_unchecked(future), cx);
         mem::forget(guard);
 
         match poll {
             Poll::Ready(out) => {
                 // Replace the future with its output.
                 Self::drop_future(ptr);
-                (*raw).output.as_mut_ptr().write(out);
+                ptr::write(&mut (*raw).fut_then_output, FutThenOutput::Output(out));
 
                 // A place where the output will be stored in case it needs to be dropped.
                 let mut output = None;
@@ -432,7 +443,10 @@ where
                             // now it's time to drop the output.
                             if state & HANDLE == 0 || state & CLOSED != 0 {
                                 // Read the output.
-                                output = Some((*raw).output.as_ptr().read());
+                                output = match &(*raw).fut_then_output {
+                                    FutThenOutput::Output(out) => Some(ptr::read(out)),
+                                    _ => hint::unreachable_unchecked(),
+                                };
                             }
 
                             // Notify the awaiter that the task has been completed.
