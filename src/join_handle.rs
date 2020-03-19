@@ -84,12 +84,9 @@ impl<R, T> JoinHandle<R, T> {
 
     /// Returns a reference to the tag stored inside the task.
     pub fn tag(&self) -> &T {
-        let offset = Header::offset_tag::<T>();
-        let ptr = self.raw_task.as_ptr();
-
         unsafe {
-            let raw = (ptr as *mut u8).add(offset) as *const T;
-            &*raw
+            let header = self.raw_task.as_ptr() as *const Header;
+            &*Header::tag_ptr::<T>(header)
         }
     }
 

@@ -1,12 +1,12 @@
-use core::alloc::Layout;
 use core::cell::UnsafeCell;
 use core::fmt;
+use core::mem;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::task::Waker;
 
 use crate::raw::TaskVTable;
 use crate::state::*;
-use crate::utils::{abort_on_panic, extend};
+use crate::utils::abort_on_panic;
 
 /// The header of a task.
 ///
@@ -128,7 +128,7 @@ impl Header {
 
         // Put the waker into the awaiter field.
         unsafe {
-            abort_on_panic(|| (*self.awaiter.get()) = Some(waker.clone()));
+            abort_on_panic(|| self.awaiter.get().write(Some(waker.clone())));
         }
 
         // This variable will contain the newly registered waker if a notification comes in before
@@ -166,13 +166,21 @@ impl Header {
         }
     }
 
-    /// Returns the offset at which the tag of type `T` is stored.
     #[inline]
-    pub(crate) fn offset_tag<T>() -> usize {
-        let layout_header = Layout::new::<Header>();
-        let layout_t = Layout::new::<T>();
-        let (_, offset_t) = extend(layout_header, layout_t);
-        offset_t
+    pub(crate) unsafe fn tag_ptr<T>(header: *const Self) -> *const T {
+        // Safety: Since `RawTask` is #[repr(C)], the tag is guaranteed to be
+        // placed directly behind the header
+        (header as *const u8).add(Self::tag_offset::<T>()) as *const _
+    }
+
+    #[inline]
+    pub(crate) const fn tag_offset<T>() -> usize {
+        let header_size = mem::size_of::<Self>();
+        let tag_align = mem::align_of::<T>();
+
+        // this matches the algorithm for field offset calculation used for
+        // #[repr(C)] types.
+        header_size + (header_size.wrapping_neg() % tag_align)
     }
 }
 

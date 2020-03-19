@@ -257,35 +257,31 @@ impl<T> Task<T> {
 
     /// Returns a reference to the tag stored inside the task.
     pub fn tag(&self) -> &T {
-        let offset = Header::offset_tag::<T>();
-        let ptr = self.raw_task.as_ptr();
-
         unsafe {
-            let raw = (ptr as *mut u8).add(offset) as *const T;
-            &*raw
+            let header = self.raw_task.as_ptr() as *const Header;
+            &*Header::tag_ptr::<T>(header)
         }
     }
 
     /// Converts this task into a raw pointer to the tag.
     pub fn into_raw(self) -> *const T {
-        let offset = Header::offset_tag::<T>();
-        let ptr = self.raw_task.as_ptr();
+        let ptr = self.raw_task.as_ptr() as *const u8;
         mem::forget(self);
 
-        unsafe { (ptr as *mut u8).add(offset) as *const T }
+        unsafe { ptr.add(Header::tag_offset::<T>()) as *const _ }
     }
 
     /// Converts a raw pointer to the tag into a task.
+    ///
+    /// # Safety
     ///
     /// This method should only be used with raw pointers returned from [`into_raw`].
     ///
     /// [`into_raw`]: #method.into_raw
     pub unsafe fn from_raw(raw: *const T) -> Task<T> {
-        let offset = Header::offset_tag::<T>();
-        let ptr = (raw as *mut u8).sub(offset) as *mut ();
-
+        let ptr = (raw as *mut u8).sub(Header::tag_offset::<T>());
         Task {
-            raw_task: NonNull::new_unchecked(ptr),
+            raw_task: NonNull::new_unchecked(ptr.cast()),
             _marker: PhantomData,
         }
     }
