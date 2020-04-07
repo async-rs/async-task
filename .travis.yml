@@ -5,7 +5,7 @@ os:
   - osx
   - windows
 
-rust: nightly
+rust: stable
 
 env:
   - RUSTFLAGS="-D warnings"
