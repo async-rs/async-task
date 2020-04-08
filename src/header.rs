@@ -128,7 +128,7 @@ impl Header {
 
         // Put the waker into the awaiter field.
         unsafe {
-            abort_on_panic(|| self.awaiter.get().write(Some(waker.clone())));
+            abort_on_panic(|| *(self.awaiter.get()) = Some(waker.clone()));
         }
 
         // This variable will contain the newly registered waker if a notification comes in before

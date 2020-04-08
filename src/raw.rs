@@ -49,14 +49,31 @@ pub(crate) struct RawTask<F, R, S, T> {
     /// The schedule function.
     schedule: S,
     /// The future and, after its completion, the future's output.
-    fut_then_output: FutThenOutput<F, R>,
+    future_then_output: FutureThenOutput<F, R>,
 }
 
-enum FutThenOutput<F, R> {
-    /// The future.
+/// Union containing first the future and then its output.
+enum FutureThenOutput<F, R> {
+    /// The future (initial variant).
     Future(F),
-    /// The future's output.
+    /// The future's output (replaces the future after its dropped).
     Output(R),
+}
+
+impl<F, R> FutureThenOutput<F, R> {
+    unsafe fn future(&mut self) -> *mut F {
+        match self {
+            FutureThenOutput::Future(future) => future,
+            FutureThenOutput::Output(_) => hint::unreachable_unchecked(),
+        }
+    }
+
+    unsafe fn output(&self) -> *const R {
+        match self {
+            FutureThenOutput::Output(output) => output,
+            FutureThenOutput::Future(_) => hint::unreachable_unchecked(),
+        }
+    }
 }
 
 impl<F, R, S, T> RawTask<F, R, S, T>
@@ -91,7 +108,7 @@ where
             },
             tag,
             schedule,
-            fut_then_output: FutThenOutput::Future(future),
+            future_then_output: FutureThenOutput::Future(future),
         });
 
         NonNull::from(Box::leak(raw_task)).cast()
@@ -319,19 +336,13 @@ where
         let raw = ptr as *mut Self;
 
         // We need a safeguard against panics because the destructor can panic.
-        abort_on_panic(|| match &mut (*raw).fut_then_output {
-            FutThenOutput::Future(future) => ptr::drop_in_place(future),
-            _ => hint::unreachable_unchecked(),
-        })
+        abort_on_panic(|| (*raw).future_then_output.future().drop_in_place());
     }
 
     /// Returns a pointer to the output inside a task.
     unsafe fn get_output(ptr: *const ()) -> *const () {
         let raw = ptr as *const Self;
-        match &(*raw).fut_then_output {
-            FutThenOutput::Output(out) => out as *const R as *const (),
-            _ => hint::unreachable_unchecked(),
-        }
+        (*raw).future_then_output.output() as *const R as _
     }
 
     /// Cleans up task's resources and deallocates it.
@@ -405,11 +416,7 @@ where
         // Poll the inner future, but surround it with a guard that closes the task in case polling
         // panics.
         let guard = Guard(raw);
-        let future = match &mut (*raw).fut_then_output {
-            FutThenOutput::Future(future) => future,
-            _ => hint::unreachable_unchecked(),
-        };
-
+        let future = &mut *(*raw).future_then_output.future();
         let poll = <F as Future>::poll(Pin::new_unchecked(future), cx);
         mem::forget(guard);
 
@@ -417,7 +424,10 @@ where
             Poll::Ready(out) => {
                 // Replace the future with its output.
                 Self::drop_future(ptr);
-                ptr::write(&mut (*raw).fut_then_output, FutThenOutput::Output(out));
+                ptr::write(
+                    &mut (*raw).future_then_output,
+                    FutureThenOutput::Output(out),
+                );
 
                 // A place where the output will be stored in case it needs to be dropped.
                 let mut output = None;
@@ -443,10 +453,7 @@ where
                             // now it's time to drop the output.
                             if state & HANDLE == 0 || state & CLOSED != 0 {
                                 // Read the output.
-                                output = match &(*raw).fut_then_output {
-                                    FutThenOutput::Output(out) => Some(ptr::read(out)),
-                                    _ => hint::unreachable_unchecked(),
-                                };
+                                output = Some(ptr::read((*raw).future_then_output.output()));
                             }
 
                             // Notify the awaiter that the task has been completed.
