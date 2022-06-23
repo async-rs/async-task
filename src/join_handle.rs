@@ -39,8 +39,8 @@ impl<R, T> JoinHandle<R, T> {
         let ptr = self.raw_task.as_ptr();
         let header = ptr as *const Header;
 
-        unsafe {
-            let mut state = (*header).state.load(Ordering::Acquire);
+        
+            let mut state = unsafe { (*header).state.load(Ordering::Acquire) };
 
             loop {
                 // If the task has been completed or closed, it can't be cancelled.
@@ -56,13 +56,13 @@ impl<R, T> JoinHandle<R, T> {
                 };
 
                 // Mark the task as closed.
-                match (*header).state.compare_exchange_weak(
+                match unsafe { (*header).state.compare_exchange_weak(
                     state,
                     new,
                     Ordering::AcqRel,
                     Ordering::Acquire,
-                ) {
-                    Ok(_) => {
+                ) }{
+                    Ok(_) => unsafe {
                         // If the task is not scheduled nor running, schedule it one more time so
                         // that its future gets dropped by the executor.
                         if state & (SCHEDULED | RUNNING) == 0 {
@@ -79,7 +79,7 @@ impl<R, T> JoinHandle<R, T> {
                     Err(s) => state = s,
                 }
             }
-        }
+        
     }
 
     /// Returns a reference to the tag stored inside the task.
@@ -193,15 +193,15 @@ impl<R, T> Future for JoinHandle<R, T> {
         let ptr = self.raw_task.as_ptr();
         let header = ptr as *const Header;
 
-        unsafe {
-            let mut state = (*header).state.load(Ordering::Acquire);
+        
+            let mut state = unsafe { (*header).state.load(Ordering::Acquire) };
 
             loop {
                 // If the task has been closed, notify the awaiter and return `None`.
                 if state & CLOSED != 0 {
                     // Even though the awaiter is most likely the current task, it could also be
                     // another task.
-                    (*header).notify(Some(cx.waker()));
+                    unsafe { (*header).notify(Some(cx.waker())) };
                     return Poll::Ready(None);
                 }
 
@@ -210,12 +210,12 @@ impl<R, T> Future for JoinHandle<R, T> {
                     // Replace the waker with one associated with the current task. We need a
                     // safeguard against panics because dropping the previous waker can panic.
                     abort_on_panic(|| {
-                        (*header).register(cx.waker());
+                        unsafe { (*header).register(cx.waker()) };
                     });
 
                     // Reload the state after registering. It is possible that the task became
                     // completed or closed just before registration so we need to check for that.
-                    state = (*header).state.load(Ordering::Acquire);
+                    state = unsafe { (*header).state.load(Ordering::Acquire) };
 
                     // If the task has been closed, return `None`. We do not need to notify the
                     // awaiter here, since we have replaced the waker above, and the executor can
@@ -231,13 +231,13 @@ impl<R, T> Future for JoinHandle<R, T> {
                 }
 
                 // Since the task is now completed, mark it as closed in order to grab its output.
-                match (*header).state.compare_exchange(
+                match unsafe { (*header).state.compare_exchange(
                     state,
                     state | CLOSED,
                     Ordering::AcqRel,
                     Ordering::Acquire,
-                ) {
-                    Ok(_) => {
+                ) }{
+                    Ok(_) => unsafe {
                         // Notify the awaiter. Even though the awaiter is most likely the current
                         // task, it could also be another task.
                         if state & AWAITER != 0 {
@@ -251,7 +251,7 @@ impl<R, T> Future for JoinHandle<R, T> {
                     Err(s) => state = s,
                 }
             }
-        }
+        
     }
 }
 

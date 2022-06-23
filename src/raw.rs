@@ -112,9 +112,9 @@ where
         // Compute the layout of the task for allocation. Abort if the computation fails.
         let task_layout = abort_on_panic(|| Self::task_layout());
 
-        unsafe {
+        
             // Allocate enough space for the entire task.
-            let raw_task = match NonNull::new(alloc::alloc::alloc(task_layout.layout) as *mut ()) {
+            let raw_task = match NonNull::new(unsafe { alloc::alloc::alloc(task_layout.layout) } as *mut ()) {
                 None => abort(),
                 Some(p) => p,
             };
@@ -122,6 +122,7 @@ where
             let raw = Self::from_ptr(raw_task.as_ptr());
 
             // Write the header as the first field of the task.
+            unsafe {
             (raw.header as *mut Header).write(Header {
                 state: AtomicUsize::new(SCHEDULED | HANDLE | REFERENCE),
                 awaiter: UnsafeCell::new(None),
@@ -143,10 +144,10 @@ where
             (raw.schedule as *mut S).write(schedule);
 
             // Write the future as the fourth field of the task.
-            raw.future.write(future);
+            raw.future.write(future) };
 
             raw_task
-        }
+        
     }
 
     /// Creates a `RawTask` from a raw task pointer.
